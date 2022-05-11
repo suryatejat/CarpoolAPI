@@ -1,11 +1,18 @@
 using AutoMapper;
 using Carpool.API.DTO.RideDTO;
 using Carpool.API.Models;
+using Carpool.API.Services;
 using Carpool.API.Services.Interfaces;
+using FireSharp;
+using FireSharp.Config;
+using FireSharp.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Carpool.API.Controllers
 {
@@ -13,15 +20,20 @@ namespace Carpool.API.Controllers
     [ApiController]
     public class RideController : ControllerBase
     {
-        private IRideServices RideServices;
         private IMapper mapper;
         private IConfiguration configuration;
-
-        public RideController(IRideServices rideServices, IMapper Mapper, IConfiguration Configuration)
+        private IFirebaseConfig config = new FirebaseConfig
         {
-            RideServices = rideServices;
+            AuthSecret = "murVwoNymAqjv27FwgPgzjz7mPINOv2dk1r8vjtF",
+            BasePath = "https://carpooltask-default-rtdb.asia-southeast1.firebasedatabase.app"
+        };
+        private IFirebaseClient client;
+
+        public RideController(IMapper Mapper, IConfiguration Configuration)
+        {
             mapper = Mapper;
             configuration = Configuration;
+            client = new FirebaseClient(config);
         }
 
         [HttpGet]
@@ -29,8 +41,14 @@ namespace Carpool.API.Controllers
         {
             try
             {
-                var rides = RideServices.GetAllRides();
-                return Ok(rides);
+                var rides = client.Get("Rides");
+                dynamic result = JsonConvert.DeserializeObject(rides.Body);
+                var list = new List<Ride>();
+                foreach (var item in result)
+                {
+                    list.Add(JsonConvert.DeserializeObject<Ride>(((JProperty)item).Value.ToString()));
+                }
+                return Ok(list);
             }
             catch(Exception e)
             {
@@ -39,34 +57,38 @@ namespace Carpool.API.Controllers
         }
 
         [HttpGet("{rideId}")]
-        public IActionResult GetARide(string rideId)
+        public Ride GetARide(string rideId)
         {
             try
             {
-                var ride = RideServices.FindRide(rideId);
-                if (ride == null)
-                    throw new Exception("Invalid Ride Id");
-                return Ok(ride);
+                var rides = client.Get("Rides/"+rideId);
+                dynamic result = JsonConvert.DeserializeObject(rides.Body);
+                var list = new List<Ride>();
+                foreach (var item in result)
+                {
+                    list.Add(JsonConvert.DeserializeObject<Ride>(((JProperty)item).Value.ToString()));
+                }
+                return list.SingleOrDefault(x => x.RideId == rideId);
             }
             catch (Exception e)
             {
-                return BadRequest(e.Message);
+                throw new Exception(e.Message);
             }
         }
 
         [HttpPost]
-        public IActionResult AddNewRide(GetRideDTO rideDTO)
+        public Response AddNewRide(GetRideDTO rideDTO)
         {
             try
             {
                 var newRide = mapper.Map<Ride>(rideDTO);
                 newRide.RideId = Guid.NewGuid().ToString();
-                RideServices.NewRide(newRide);
-                return Ok(newRide);
+                client.Set("Rides/" + newRide.RideId, newRide);
+                return new Response { Status = "Success", Message = "Added the new Ride" };
             }
             catch (Exception e)
             {
-                return BadRequest(e.Message);
+                return new Response { Status = "Failed", Message = e.Message };
             }
         }
 
@@ -75,8 +97,8 @@ namespace Carpool.API.Controllers
         {
             try
             {
-                var ride = RideServices.RemoveRide(rideId);
-                return Ok(ride);
+                client.Delete("Rides/" + rideId);
+                return Ok("Deleted the Ride");
             }
             catch (Exception e)
             {
@@ -89,7 +111,21 @@ namespace Carpool.API.Controllers
         {
             try
             {
-                var availableRides = RideServices.AvailableRides(source,destination);
+                var rides = client.Get("Rides");
+                dynamic result = JsonConvert.DeserializeObject(rides.Body);
+                var list = new List<Ride>();
+                foreach (var item in result)
+                {
+                    list.Add(JsonConvert.DeserializeObject<Ride>(((JProperty)item).Value.ToString()));
+                }
+                var availableRides = new List<Ride>();
+                foreach(var item in list)
+                {
+                    if(item.Source==source && item.Destination == destination)
+                    {
+                        availableRides.Add(item);
+                    }
+                }
                 return Ok(availableRides);
             }
             catch(Exception e)
